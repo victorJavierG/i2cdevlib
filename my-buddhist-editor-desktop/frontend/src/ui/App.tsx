@@ -6,6 +6,8 @@ import {
   listCommentaries,
   createCommentary,
   updateCommentary,
+  createLink,
+  getBacklinks,
   type ParagraphRow,
   type CommentaryRow
 } from "../lib/tauri";
@@ -14,6 +16,8 @@ export function App() {
   const [paragraphs, setParagraphs] = useState<ParagraphRow[]>([]);
   const [selectedParagraphId, setSelectedParagraphId] = useState<number | null>(null);
   const [comments, setComments] = useState<CommentaryRow[]>([]);
+  const [backlinks, setBacklinks] = useState<[string, number][]>([]);
+  const [linkTargetParagraphId, setLinkTargetParagraphId] = useState<number | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -33,6 +37,8 @@ export function App() {
       try {
         const cs = await listCommentaries(selectedParagraphId);
         setComments(cs);
+        const bl = await getBacklinks("paragraph", selectedParagraphId);
+        setBacklinks(bl);
       } catch (e) {
         console.error(e);
       }
@@ -98,6 +104,58 @@ export function App() {
           <div style={{ marginBottom: 12, color: "#555" }}>
             <div style={{ fontSize: 12 }}>Párrafo seleccionado</div>
             <div>“{selectedParagraph.text}”</div>
+          </div>
+        )}
+        {selectedParagraph && (
+          <div style={{ marginBottom: 20, padding: 12, border: "1px solid #eee", borderRadius: 6 }}>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>Enlaces a este párrafo (backlinks)</div>
+            {backlinks.length === 0 ? (
+              <div style={{ color: "#888" }}>Sin backlinks aún.</div>
+            ) : (
+              <ul>
+                {backlinks.map(([fromType, fromId]) => {
+                  const label = fromType === "paragraph"
+                    ? `Párrafo #${fromId}: ${paragraphs.find(p => p.id === fromId)?.text ?? "(texto no cargado)"}`
+                    : `Comentario #${fromId}`;
+                  return (
+                    <li key={`${fromType}-${fromId}`} style={{ marginBottom: 6 }}>{label}</li>
+                  );
+                })}
+              </ul>
+            )}
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12, marginBottom: 4 }}>Crear enlace desde este párrafo hacia:</div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <select
+                  value={linkTargetParagraphId ?? ""}
+                  onChange={(e) => setLinkTargetParagraphId(e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="">Selecciona un párrafo…</option>
+                  {paragraphs
+                    .filter(p => p.id !== selectedParagraphId)
+                    .sort((a, b) => a.order_index - b.order_index)
+                    .map(p => (
+                      <option key={p.id} value={p.id}>{`#${p.id} · ${p.text.slice(0, 60)}`}</option>
+                    ))}
+                </select>
+                <button
+                  onClick={async () => {
+                    if (selectedParagraphId == null || linkTargetParagraphId == null) return;
+                    try {
+                      await createLink("paragraph", selectedParagraphId, "paragraph", linkTargetParagraphId);
+                      const bl = await getBacklinks("paragraph", selectedParagraphId);
+                      setBacklinks(bl);
+                      setLinkTargetParagraphId(null);
+                    } catch (err) {
+                      console.error(err);
+                    }
+                  }}
+                  disabled={selectedParagraphId == null || linkTargetParagraphId == null}
+                >
+                  Crear enlace
+                </button>
+              </div>
+            </div>
           </div>
         )}
         <ul>
