@@ -223,3 +223,83 @@ pub fn update_commentary_text(conn: &Connection, id: i64, text: &str) -> Result<
     Ok(())
 }
 
+pub fn enroll_paragraph_for_review(conn: &Connection, paragraph_id: i64) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO review_item (target_type, target_id, next_review_at, ease, interval_days)
+         SELECT 'paragraph', ?1, ?2, 2.5, 1
+         WHERE NOT EXISTS (
+           SELECT 1 FROM review_item WHERE target_type='paragraph' AND target_id=?1
+         )",
+        params![paragraph_id, now],
+    )?;
+    Ok(())
+}
+
+pub fn list_due_paragraphs(conn: &Connection, limit: i64) -> Result<Vec<ParagraphRow>> {
+    let now = chrono::Utc::now().timestamp();
+    let mut stmt = conn.prepare(
+        "SELECT p.id, p.section_id, p.order_index, p.text
+         FROM review_item r
+         JOIN paragraph p ON p.id = r.target_id
+         WHERE r.target_type='paragraph' AND r.next_review_at <= ?1
+         ORDER BY r.next_review_at ASC
+         LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![now, limit], |row| {
+        Ok(ParagraphRow {
+            id: row.get(0)?,
+            section_id: row.get(1)?,
+            order_index: row.get(2)?,
+            text: row.get(3)?,
+        })
+    })?;
+    let mut result = Vec::new();
+    for r in rows { result.push(r?); }
+    Ok(result)
+}
+
+pub fn register_review_response_for_paragraph(conn: &Connection, paragraph_id: i64, grade: &str) -> Result<()> {
+    // Fetch current scheduling
+    let (mut ease, mut interval_days): (f64, i64) = match conn.query_row(
+        "SELECT ease, interval_days FROM review_item WHERE target_type='paragraph' AND target_id=?1",
+        params![paragraph_id],
+        |row| Ok((row.get::<_, f64>(0)?, row.get::<_, i64>(1)?)),
+    ) {
+        Ok(vals) => vals,
+        Err(_) => {
+            // Auto-enroll if missing
+            enroll_paragraph_for_review(conn, paragraph_id)?;
+            (2.5, 1)
+        }
+    };
+
+    // Adjust ease and interval
+    match grade.to_lowercase().as_str() {
+        "hard" => {
+            ease = (ease - 0.15).max(1.3);
+            interval_days = 1;
+        }
+        "good" => {
+            // keep ease
+            interval_days = ((interval_days as f64) * 1.5).round().max(1.0) as i64;
+        }
+        "easy" => {
+            ease = ease + 0.15;
+            interval_days = ((interval_days as f64) * 2.5).round().max(1.0) as i64;
+        }
+        _ => {
+            // default to good
+            interval_days = ((interval_days as f64) * 1.5).round().max(1.0) as i64;
+        }
+    }
+
+    let next = chrono::Utc::now().timestamp() + interval_days * 86_400;
+    conn.execute(
+        "UPDATE review_item SET ease=?1, interval_days=?2, next_review_at=?3 WHERE target_type='paragraph' AND target_id=?4",
+        params![ease, interval_days, next, paragraph_id],
+    )?;
+    super::db::log_edit(conn, "paragraph", paragraph_id, "review")?;
+    Ok(())
+}
+

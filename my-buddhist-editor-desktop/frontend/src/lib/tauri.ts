@@ -58,3 +58,18 @@ export async function updateCommentary(id: number, text: string): Promise<void> 
   return invoke("cmd_update_commentary", { id, text }) as Promise<void>;
 }
 
+export async function enrollParagraphForReview(paragraphId: number): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/tauri");
+  return invoke("cmd_enroll_paragraph_for_review", { paragraphId }) as Promise<void>;
+}
+
+export async function listDueParagraphs(limit: number): Promise<ParagraphRow[]> {
+  const { invoke } = await import("@tauri-apps/api/tauri");
+  return invoke("cmd_list_due_paragraphs", { limit }) as Promise<ParagraphRow[]>;
+}
+
+export async function registerReviewResponseForParagraph(paragraphId: number, grade: "hard" | "good" | "easy"): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/tauri");
+  return invoke("cmd_register_review_response_for_paragraph", { paragraphId, grade }) as Promise<void>;
+}
+

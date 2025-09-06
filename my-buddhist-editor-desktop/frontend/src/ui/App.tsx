@@ -8,6 +8,9 @@ import {
   updateCommentary,
   createLink,
   getBacklinks,
+  enrollParagraphForReview,
+  listDueParagraphs,
+  registerReviewResponseForParagraph,
   type ParagraphRow,
   type CommentaryRow
 } from "../lib/tauri";
@@ -18,6 +21,8 @@ export function App() {
   const [comments, setComments] = useState<CommentaryRow[]>([]);
   const [backlinks, setBacklinks] = useState<[string, number][]>([]);
   const [linkTargetParagraphId, setLinkTargetParagraphId] = useState<number | null>(null);
+  const [tab, setTab] = useState<"editor" | "review">("editor");
+  const [dueItems, setDueItems] = useState<ParagraphRow[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -52,7 +57,11 @@ export function App() {
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", height: "100vh" }}>
-      <div style={{ padding: 16, borderRight: "1px solid #ddd", overflow: "auto" }}>
+      <div style={{ gridColumn: "1 / span 2", padding: 8, borderBottom: "1px solid #ddd", display: "flex", gap: 8 }}>
+        <button onClick={() => setTab("editor")} style={{ fontWeight: tab === "editor" ? 700 : 400 }}>Editor</button>
+        <button onClick={async () => { setTab("review"); const items = await listDueParagraphs(20); setDueItems(items); }} style={{ fontWeight: tab === "review" ? 700 : 400 }}>Lectura diaria</button>
+      </div>
+      <div style={{ padding: 16, borderRight: "1px solid #ddd", overflow: "auto", display: tab === "editor" ? "block" : "none" }}>
         <h2>Autor</h2>
         <ol>
           {paragraphs
@@ -81,7 +90,7 @@ export function App() {
               </li>
             ))}
         </ol>
-        <div style={{ marginTop: 16 }}>
+        <div style={{ marginTop: 16, display: "flex", gap: 8, alignItems: "center" }}>
           <button
             onClick={async () => {
               try {
@@ -95,10 +104,24 @@ export function App() {
           >
             Añadir párrafo
           </button>
+          {selectedParagraphId != null && (
+            <button
+              onClick={async () => {
+                try {
+                  await enrollParagraphForReview(selectedParagraphId);
+                  alert("Párrafo inscrito en Lectura diaria");
+                } catch (err) {
+                  console.error(err);
+                }
+              }}
+            >
+              Inscribir en Lectura diaria
+            </button>
+          )}
         </div>
       </div>
 
-      <div style={{ padding: 16, overflow: "auto" }}>
+      <div style={{ padding: 16, overflow: "auto", display: tab === "editor" ? "block" : "none" }}>
         <h2>Comentarios</h2>
         {selectedParagraph && (
           <div style={{ marginBottom: 12, color: "#555" }}>
@@ -193,6 +216,24 @@ export function App() {
             Añadir comentario
           </button>
         </div>
+      </div>
+
+      <div style={{ gridColumn: "1 / span 2", padding: 16, display: tab === "review" ? "block" : "none" }}>
+        <h2>Lectura diaria</h2>
+        {dueItems.length === 0 ? (
+          <div style={{ color: "#888" }}>No hay elementos vencidos. Inscribe párrafos desde el editor.</div>
+        ) : (
+          dueItems.map(item => (
+            <div key={item.id} style={{ marginBottom: 16, padding: 12, border: "1px solid #eee", borderRadius: 6 }}>
+              <div style={{ marginBottom: 8 }}>{item.text}</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={async () => { await registerReviewResponseForParagraph(item.id, "hard"); const items = await listDueParagraphs(20); setDueItems(items); }}>Hard</button>
+                <button onClick={async () => { await registerReviewResponseForParagraph(item.id, "good"); const items = await listDueParagraphs(20); setDueItems(items); }}>Good</button>
+                <button onClick={async () => { await registerReviewResponseForParagraph(item.id, "easy"); const items = await listDueParagraphs(20); setDueItems(items); }}>Easy</button>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
