@@ -1,4 +1,5 @@
 use rusqlite::{params, Connection, Result};
+use serde::Serialize;
 
 pub fn open_or_create(db_path: &str) -> Result<Connection> {
     let conn = Connection::open(db_path)?;
@@ -103,5 +104,122 @@ pub fn get_backlinks(conn: &Connection, to_type: &str, to_id: i64) -> Result<Vec
         result.push(r?);
     }
     Ok(result)
+}
+
+#[derive(Debug, Serialize)]
+pub struct ParagraphRow {
+    pub id: i64,
+    pub section_id: i64,
+    pub order_index: i64,
+    pub text: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CommentaryRow {
+    pub id: i64,
+    pub paragraph_id: i64,
+    pub section_id: Option<i64>,
+    pub text: String,
+    pub created_at: i64,
+}
+
+pub fn ensure_default_book_and_section(conn: &Connection) -> Result<(i64, i64)> {
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO book (id, title, author, created_at) SELECT 1, 'Default Book', 'Unknown', ?1 WHERE NOT EXISTS (SELECT 1 FROM book WHERE id = 1)",
+        params![now],
+    )?;
+    conn.execute(
+        "INSERT INTO section (id, book_id, parent_id, title, order_index) SELECT 1, 1, NULL, 'Default Section', 1 WHERE NOT EXISTS (SELECT 1 FROM section WHERE id = 1)",
+        params![],
+    )?;
+    Ok((1, 1))
+}
+
+pub fn list_paragraphs(conn: &Connection, section_id: Option<i64>) -> Result<Vec<ParagraphRow>> {
+    let mut stmt = if let Some(sid) = section_id {
+        conn.prepare("SELECT id, section_id, order_index, text FROM paragraph WHERE section_id = ?1 ORDER BY order_index ASC, id ASC")?
+    } else {
+        conn.prepare("SELECT id, section_id, order_index, text FROM paragraph ORDER BY section_id ASC, order_index ASC, id ASC")?
+    };
+    let rows = if let Some(sid) = section_id {
+        stmt.query_map(params![sid], |row| {
+            Ok(ParagraphRow {
+                id: row.get(0)?,
+                section_id: row.get(1)?,
+                order_index: row.get(2)?,
+                text: row.get(3)?,
+            })
+        })?
+    } else {
+        stmt.query_map([], |row| {
+            Ok(ParagraphRow {
+                id: row.get(0)?,
+                section_id: row.get(1)?,
+                order_index: row.get(2)?,
+                text: row.get(3)?,
+            })
+        })?
+    };
+    let mut result = Vec::new();
+    for r in rows { result.push(r?); }
+    Ok(result)
+}
+
+pub fn create_paragraph(conn: &Connection, text: &str) -> Result<ParagraphRow> {
+    let (_book_id, section_id) = ensure_default_book_and_section(conn)?;
+    let next_order: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(order_index), 0) + 1 FROM paragraph WHERE section_id = ?1",
+        params![section_id],
+        |row| row.get(0),
+    )?;
+    conn.execute(
+        "INSERT INTO paragraph (section_id, order_index, text) VALUES (?1, ?2, ?3)",
+        params![section_id, next_order, text],
+    )?;
+    let id = conn.last_insert_rowid();
+    super::db::log_edit(conn, "paragraph", id, "create")?;
+    Ok(ParagraphRow { id, section_id, order_index: next_order, text: text.to_string() })
+}
+
+pub fn update_paragraph_text(conn: &Connection, id: i64, text: &str) -> Result<()> {
+    conn.execute("UPDATE paragraph SET text = ?1 WHERE id = ?2", params![text, id])?;
+    super::db::log_edit(conn, "paragraph", id, "update")?;
+    Ok(())
+}
+
+pub fn list_commentaries(conn: &Connection, paragraph_id: i64) -> Result<Vec<CommentaryRow>> {
+    let mut stmt = conn.prepare("SELECT id, paragraph_id, section_id, text, created_at FROM commentary WHERE paragraph_id = ?1 ORDER BY id ASC")?;
+    let rows = stmt.query_map(params![paragraph_id], |row| {
+        Ok(CommentaryRow {
+            id: row.get(0)?,
+            paragraph_id: row.get(1)?,
+            section_id: row.get(2)?,
+            text: row.get(3)?,
+            created_at: row.get(4)?,
+        })
+    })?;
+    let mut result = Vec::new();
+    for r in rows { result.push(r?); }
+    Ok(result)
+}
+
+pub fn create_commentary(conn: &Connection, paragraph_id: i64, text: &str) -> Result<CommentaryRow> {
+    let now = chrono::Utc::now().timestamp();
+    // derive section_id from paragraph
+    let section_id: i64 = conn.query_row("SELECT section_id FROM paragraph WHERE id = ?1", params![paragraph_id], |row| row.get(0))?;
+    conn.execute(
+        "INSERT INTO commentary (paragraph_id, section_id, author, text, created_at) VALUES (?1, ?2, NULL, ?3, ?4)",
+        params![paragraph_id, section_id, text, now],
+    )?;
+    let id = conn.last_insert_rowid();
+    super::db::log_edit(conn, "commentary", id, "create")?;
+    Ok(CommentaryRow { id, paragraph_id, section_id: Some(section_id), text: text.to_string(), created_at: now })
+}
+
+pub fn update_commentary_text(conn: &Connection, id: i64, text: &str) -> Result<()> {
+    conn.execute("UPDATE commentary SET text = ?1 WHERE id = ?2", params![text, id])?;
+    super::db::log_edit(conn, "commentary", id, "update")?;
+    Ok(())
 }
 

@@ -27,6 +27,43 @@ fn cmd_get_backlinks(state: State<AppState>, to_type: String, to_id: i64) -> Res
     db::get_backlinks(&conn, &to_type, to_id).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn cmd_list_paragraphs(state: State<AppState>) -> Result<Vec<db::ParagraphRow>, String> {
+    let conn = state.conn.lock().map_err(|_| "lock error")?;
+    db::ensure_default_book_and_section(&conn).map_err(|e| e.to_string())?;
+    db::list_paragraphs(&conn, Some(1)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_create_paragraph(state: State<AppState>, text: String) -> Result<db::ParagraphRow, String> {
+    let conn = state.conn.lock().map_err(|_| "lock error")?;
+    db::create_paragraph(&conn, &text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_update_paragraph(state: State<AppState>, id: i64, text: String) -> Result<(), String> {
+    let conn = state.conn.lock().map_err(|_| "lock error")?;
+    db::update_paragraph_text(&conn, id, &text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_list_commentaries(state: State<AppState>, paragraph_id: i64) -> Result<Vec<db::CommentaryRow>, String> {
+    let conn = state.conn.lock().map_err(|_| "lock error")?;
+    db::list_commentaries(&conn, paragraph_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_create_commentary(state: State<AppState>, paragraph_id: i64, text: String) -> Result<db::CommentaryRow, String> {
+    let conn = state.conn.lock().map_err(|_| "lock error")?;
+    db::create_commentary(&conn, paragraph_id, &text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_update_commentary(state: State<AppState>, id: i64, text: String) -> Result<(), String> {
+    let conn = state.conn.lock().map_err(|_| "lock error")?;
+    db::update_commentary_text(&conn, id, &text).map_err(|e| e.to_string())
+}
+
 fn main() {
     let app_dir = tauri::api::path::app_dir(tauri::Config::default()).unwrap_or(std::path::PathBuf::from("."));
     let _ = std::fs::create_dir_all(&app_dir);
@@ -35,7 +72,11 @@ fn main() {
 
     tauri::Builder::default()
         .manage(AppState { conn: Mutex::new(conn) })
-        .invoke_handler(tauri::generate_handler![cmd_log_edit, cmd_create_link, cmd_get_backlinks])
+        .invoke_handler(tauri::generate_handler![
+            cmd_log_edit, cmd_create_link, cmd_get_backlinks,
+            cmd_list_paragraphs, cmd_create_paragraph, cmd_update_paragraph,
+            cmd_list_commentaries, cmd_create_commentary, cmd_update_commentary
+        ])
         .plugin(tauri_plugin_shell::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
